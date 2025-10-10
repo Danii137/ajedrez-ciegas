@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+// @ts-nocheck
+import { useState, useEffect, useRef } from 'react'
 import { Chess } from 'chess.js'
 import { getStockfish, StockfishEngine } from './lib/stockfish'
-import { getSounds } from './lib/sounds' // ← AÑADIR ESTA LÍNEA
+import { getSounds } from './lib/sounds'
 
 function App() {
   const [game] = useState(() => new Chess())

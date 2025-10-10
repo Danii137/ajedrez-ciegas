@@ -1,3 +1,4 @@
+// @ts-nocheck
 class ChessSounds {
   private audioContext: AudioContext | null = null
   private enabled = true

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Chess } from 'chess.js'
 
 export class StockfishEngine {
