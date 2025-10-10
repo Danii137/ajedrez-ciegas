@@ -1,758 +1,443 @@
-// @ts-nocheck
-import { useState, useEffect, useRef } from 'react'
-import { Chess } from 'chess.js'
-import { getStockfish, StockfishEngine } from './lib/stockfish'
-import { getSounds } from './lib/sounds'
-
-function App() {
-  const [game] = useState(() => new Chess())
-  const [selectedSquare, setSelectedSquare] = useState<string | null>(null)
-  const [legalMoves, setLegalMoves] = useState<string[]>([])
-  const [moveHistory, setMoveHistory] = useState<string[]>([])
-  const [boardKey, setBoardKey] = useState(0) // Para forzar re-render
-  
-  // Motor de ajedrez
-  const [engine, setEngine] = useState<StockfishEngine | null>(null)
-  const [engineLevel, setEngineLevel] = useState(5)
-  const [playingAgainstEngine, setPlayingAgainstEngine] = useState(false)
-  const [engineThinking, setEngineThinking] = useState(false)
-  
-  // Input por teclado
-  const [keyboardMove, setKeyboardMove] = useState('')
-  const [keyboardError, setKeyboardError] = useState('')
-  
-  // Toggles de visualización
-const [settings, setSettings] = useState({
-  showBoard: true,
-  showCoordinates: true,
-  showOwnPieces: true,
-  showOpponentPieces: true,
-  monochrome: false,
-  identicalPieces: false,
-  dragAndDrop: false,
-  clickInput: true,
-  keyboardInput: false,
-  sounds: true  // ← AÑADIR ESTA LÍNEA
-})
-
-  // Inicializar sistema de sonidos
-  const sounds = getSounds()
-  const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
-  const ranks = ['8', '7', '6', '5', '4', '3', '2', '1']
-  const board = game.board()
-
-  const pieces: Record<string, string> = {
-    'wp': '♙', 'wn': '♘', 'wb': '♗', 'wr': '♖', 'wq': '♕', 'wk': '♔',
-    'bp': '♟', 'bn': '♞', 'bb': '♝', 'br': '♜', 'bq': '♛', 'bk': '♚'
-  }
-
-  const identicalPiece = '●'
-
-  // Inicializar motor
-  useEffect(() => {
-    let mounted = true
-    
-    getStockfish().then(eng => {
-      if (mounted) {
-        setEngine(eng)
-        console.log('✅ Stockfish cargado')
-      }
-    }).catch(err => {
-      console.error('❌ Error cargando Stockfish:', err)
-    })
-    
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  // Motor responde DESPUÉS de que el usuario mueva (corregido)
-  useEffect(() => {
-    const shouldEngineMove = 
-      playingAgainstEngine && 
-      game.turn() === 'b' && 
-      !game.isGameOver() && 
-      engine &&
-      !engineThinking &&
-      moveHistory.length > 0 // El usuario ya movió
-
-    if (shouldEngineMove) {
-      // Timeout para que se vea el movimiento del usuario primero
-      const timer = setTimeout(() => {
-        makeEngineMove()
-      }, 500)
-      return () => clearTimeout(timer)
-    }
-  }, [moveHistory.length, playingAgainstEngine, engineThinking]) // Trigger correcto
-
-  const makeEngineMove = async () => {
-  if (!engine || engineThinking) return
-  
-  setEngineThinking(true)
-  
-  try {
-    const fen = game.fen()
-    console.log('🤖 Motor calculando desde FEN:', fen)
-    
-    const bestMove = await engine.getBestMove(fen, engineLevel)
-    console.log('🤖 Mejor movimiento:', bestMove)
-    
-    if (bestMove && bestMove.length >= 4) {
-      const from = bestMove.substring(0, 2)
-      const to = bestMove.substring(2, 4)
-      const promotion = bestMove[4] || 'q'
-      
-      const move = game.move({ from, to, promotion })
-      
-      if (move) {
-        // ← AÑADIR SONIDO:
-        playMoveSound(move)
-        
-        setMoveHistory(prev => [...prev, move.san])
-        setBoardKey(k => k + 1)
-        console.log('✅ Motor movió:', move.san)
-      }
-    }
-  } catch (error) {
-    console.error('❌ Error del motor:', error)
-  } finally {
-    setEngineThinking(false)
-  }
-}
-
-
-  const handleSquareClick = (square: string) => {
-  if (!settings.clickInput) return
-  if (playingAgainstEngine && game.turn() === 'b') return
-  if (engineThinking) return
-  
-  if (selectedSquare) {
-    if (legalMoves.includes(square)) {
-      try {
-        const move = game.move({ from: selectedSquare, to: square })
-        if (move) {
-          // ← AÑADIR SONIDOS:
-          playMoveSound(move)
-          
-          setMoveHistory(prev => [...prev, move.san])
-          setSelectedSquare(null)
-          setLegalMoves([])
-          setBoardKey(k => k + 1)
-        }
-      } catch {
-        selectSquare(square)
-      }
-    } else {
-      selectSquare(square)
-    }
-  } else {
-    selectSquare(square)
-  }
-}
-
-
-  const selectSquare = (square: string) => {
-  try {
-    const moves = game.moves({ square: square as any, verbose: true })
-    if (moves.length > 0) {
-      setSelectedSquare(square)
-      setLegalMoves(moves.map((m: any) => m.to))
-    } else {
-      setSelectedSquare(null)
-      setLegalMoves([])
-    }
-  } catch {
-    setSelectedSquare(null)
-    setLegalMoves([])
-  }
-}
-
-
-
-
-  const handleKeyboardMove = (e: React.FormEvent) => {
-  e.preventDefault()
-  if (!keyboardMove.trim()) return
-  
-  setKeyboardError('')
-  
-  try {
-    const moves = game.moves()
-    const matching = moves.find(m => 
-      m.toLowerCase() === keyboardMove.toLowerCase().trim() ||
-      m.toLowerCase().replace(/[+#]/g, '') === keyboardMove.toLowerCase().trim()
-    )
-    
-    if (matching) {
-      const move = game.move(matching)
-      if (move) {
-        // ← AÑADIR SONIDO:
-        playMoveSound(move)
-        
-        setMoveHistory(prev => [...prev, move.san])
-        setBoardKey(k => k + 1)
-        setKeyboardMove('')
-        return
-      }
-    }
-    
-    const input = keyboardMove.toLowerCase().trim()
-    if (input.length >= 4) {
-      const from = input.substring(0, 2)
-      const to = input.substring(2, 4)
-      const promotion = input[4]
-      
-      const move = game.move({ from, to, promotion })
-      if (move) {
-        // ← AÑADIR SONIDO:
-        playMoveSound(move)
-        
-        setMoveHistory(prev => [...prev, move.san])
-        setBoardKey(k => k + 1)
-        setKeyboardMove('')
-        return
-      }
-    }
-    
-    // ← SONIDO DE ERROR:
-    sounds.illegal()
-    setKeyboardError('❌ Movimiento inválido')
-    setTimeout(() => setKeyboardError(''), 2000)
-  } catch (error) {
-    sounds.illegal()
-    setKeyboardError('❌ Formato incorrecto')
-    setTimeout(() => setKeyboardError(''), 2000)
-  }
-}
-
-
-  const resetGame = () => {
-    game.reset()
-    setSelectedSquare(null)
-    setLegalMoves([])
-    setMoveHistory([])
-    setBoardKey(k => k + 1)
-    setKeyboardMove('')
-    setKeyboardError('')
-  }
-
-  const toggleEnginePlay = () => {
-    setPlayingAgainstEngine(!playingAgainstEngine)
-    resetGame()
-  }
-
-  const applyPreset = (preset: string) => {
-    switch(preset) {
-      case 'blind':
-        setSettings({
-          ...settings,
-          showBoard: false,
-          showOwnPieces: false,
-          showOpponentPieces: false,
-          keyboardInput: true,
-          clickInput: false
-        })
-        break
-      case 'semi':
-        setSettings({
-          ...settings,
-          showBoard: true,
-          showOwnPieces: false,
-          showOpponentPieces: false,
-          showCoordinates: true,
-          keyboardInput: true
-        })
-        break
-      case 'rival':
-        setSettings({
-          ...settings,
-          showBoard: true,
-          showOwnPieces: false,
-          showOpponentPieces: true
-        })
-        break
-      case 'mono':
-        setSettings({
-          ...settings,
-          monochrome: true
-        })
-        break
-    }
-  }
-
-  const shouldShowPiece = (piece: any) => {
-    if (!piece) return false
-    if (piece.color === 'w' && !settings.showOwnPieces) return false
-    if (piece.color === 'b' && !settings.showOpponentPieces) return false
-    return true
-  }
-
-  const getLevelName = (level: number) => {
-    if (level <= 3) return '🟢 Principiante'
-    if (level <= 7) return '🟡 Intermedio'
-    if (level <= 12) return '🟠 Avanzado'
-    if (level <= 17) return '🔴 Experto'
-    return '🟣 Maestro'
-  }
-// Justo ANTES de "return (" en el componente App
-const playMoveSound = (move: any) => {
-  if (!settings.sounds) return
-
-  // Jaque mate
-  if (game.isCheckmate()) {
-    sounds.checkmate()
-  }
-  // Jaque
-  else if (game.isCheck()) {
-    sounds.check()
-  }
-  // Enroque
-  else if (move.san.includes('O-O')) {
-    sounds.castle()
-  }
-  // Captura
-  else if (move.captured || move.san.includes('x')) {
-    sounds.capture()
-  }
-  // Movimiento normal
-  else {
-    sounds.move()
-  }
-}
-
-  return (
-    <div style={{ 
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0a0e27 0%, #1e3a8a 50%, #0f172a 100%)',
-      color: 'white',
-      padding: '2rem',
-      fontFamily: 'system-ui, -apple-system, sans-serif'
+return (
+  <div style={{ 
+    minHeight: '100vh',
+    background: 'linear-gradient(135deg, #0a0e27 0%, #1e3a8a 50%, #0f172a 100%)',
+    color: 'white',
+    padding: '1rem',
+    fontFamily: 'system-ui, -apple-system, sans-serif'
+  }}>
+    <div style={{
+      maxWidth: '1400px',
+      margin: '0 auto',
+      display: 'grid',
+      gridTemplateColumns: window.innerWidth > 768 ? '1fr 400px' : '1fr',
+      gap: '2rem',
+      alignItems: 'start'
     }}>
-      <div style={{
-        maxWidth: '1400px',
-        margin: '0 auto',
-        display: 'grid',
-        gridTemplateColumns: '1fr 400px',
-        gap: '2rem',
-        alignItems: 'start'
-      }}>
+      
+      {/* COLUMNA PRINCIPAL */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         
-        {/* COLUMNA IZQUIERDA */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          
-          <div style={{ textAlign: 'center' }}>
-            <h1 style={{ 
-              fontSize: '3rem', 
+        {/* Título */}
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{ 
+            fontSize: window.innerWidth > 768 ? '3rem' : '2rem',
+            fontWeight: 'bold', 
+            margin: 0,
+            background: 'linear-gradient(to right, #60a5fa, #a78bfa)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>
+            ♟️ Ajedrez a Ciegas
+          </h1>
+          <p style={{ color: '#94a3b8', marginTop: '0.5rem', fontSize: '0.875rem' }}>
+            {engine ? '✅ Motor listo' : '⏳ Cargando...'}
+          </p>
+        </div>
+
+        {/* Input por teclado */}
+        {settings.keyboardInput && (
+          <div style={{
+            backgroundColor: 'rgba(30, 41, 59, 0.9)',
+            backdropFilter: 'blur(10px)',
+            borderRadius: '12px',
+            padding: '1rem',
+            border: '2px solid rgba(59, 130, 246, 0.5)',
+            boxShadow: '0 8px 24px rgba(59, 130, 246, 0.3)'
+          }}>
+            <h3 style={{ 
+              fontSize: '1.125rem',
               fontWeight: 'bold', 
-              margin: 0,
-              background: 'linear-gradient(to right, #60a5fa, #a78bfa)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text'
+              marginBottom: '0.75rem',
+              color: '#60a5fa'
             }}>
-              ♟️ Ajedrez a Ciegas
-            </h1>
-            <p style={{ color: '#94a3b8', marginTop: '0.5rem' }}>
-              {engine ? '✅ Motor Stockfish cargado' : '⏳ Cargando motor...'}
+              ⌨️ Input
+            </h3>
+            
+            <form onSubmit={handleKeyboardMove} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <input
+                type="text"
+                value={keyboardMove}
+                onChange={(e) => setKeyboardMove(e.target.value)}
+                placeholder="e4, Nf3..."
+                disabled={engineThinking || (playingAgainstEngine && game.turn() === 'b')}
+                autoFocus={window.innerWidth > 768}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  fontSize: '1rem',
+                  backgroundColor: 'rgba(15, 23, 42, 0.8)',
+                  border: '2px solid rgba(148, 163, 184, 0.3)',
+                  borderRadius: '8px',
+                  color: 'white',
+                  outline: 'none',
+                  fontFamily: 'ui-monospace, monospace'
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!keyboardMove.trim() || engineThinking}
+                style={{
+                  padding: '0.75rem',
+                  background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: keyboardMove.trim() && !engineThinking ? 'pointer' : 'not-allowed',
+                  opacity: keyboardMove.trim() && !engineThinking ? 1 : 0.5
+                }}
+              >
+                ▶️ Mover
+              </button>
+            </form>
+
+            {keyboardError && (
+              <p style={{ marginTop: '0.5rem', color: '#ef4444', fontSize: '0.875rem', fontWeight: '600' }}>
+                {keyboardError}
+              </p>
+            )}
+
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '0.5rem',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              color: '#94a3b8'
+            }}>
+              💡 <strong>SAN:</strong> e4, Nf3, O-O • <strong>LAN:</strong> e2e4
+            </div>
+          </div>
+        )}
+
+        {/* Tablero */}
+        {settings.showBoard ? (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            width: '100%',
+            overflowX: 'auto'
+          }}>
+            <div 
+              key={boardKey}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(8, ${window.innerWidth > 768 ? '80px' : 'calc((100vw - 3rem) / 8)'})`,
+                gridTemplateRows: `repeat(8, ${window.innerWidth > 768 ? '80px' : 'calc((100vw - 3rem) / 8)'})`,
+                border: '6px solid rgba(148, 163, 184, 0.3)',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                boxShadow: '0 0 40px rgba(59, 130, 246, 0.3), 0 20px 60px rgba(0, 0, 0, 0.5)',
+                position: 'relative',
+                opacity: engineThinking ? 0.6 : 1,
+                transition: 'opacity 0.3s',
+                maxWidth: window.innerWidth > 768 ? '640px' : 'calc(100vw - 2rem)'
+              }}>
+              {ranks.map((rank, rankIdx) =>
+                files.map((file, fileIdx) => {
+                  const square = `${file}${rank}`
+                  const piece = board[rankIdx][fileIdx]
+                  const isLight = (rankIdx + fileIdx) % 2 === 0
+                  const isSelected = selectedSquare === square
+                  const isLegalMove = legalMoves.includes(square)
+                  const showPiece = shouldShowPiece(piece)
+                  const pieceKey = piece ? `${piece.color}${piece.type}` : null
+
+                  return (
+                    <div
+                      key={square}
+                      onClick={() => handleSquareClick(square)}
+                      style={{
+                        backgroundColor: settings.monochrome 
+                          ? (isLight ? '#64748b' : '#334155')
+                          : (isLight ? '#f0d9b5' : '#b58863'),
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: window.innerWidth > 768 ? '4rem' : '2.5rem',
+                        cursor: engineThinking ? 'wait' : 'pointer',
+                        position: 'relative',
+                        outline: isSelected ? '4px solid #3b82f6' : 'none',
+                        outlineOffset: '-4px',
+                        transition: 'all 0.2s ease',
+                        boxShadow: isSelected ? 'inset 0 0 20px rgba(59, 130, 246, 0.3)' : 'none',
+                        touchAction: 'manipulation'
+                      }}
+                      onTouchStart={(e) => {
+                        e.currentTarget.style.filter = 'brightness(1.2)'
+                      }}
+                      onTouchEnd={(e) => {
+                        e.currentTarget.style.filter = 'brightness(1)'
+                      }}
+                    >
+                      {settings.showCoordinates && fileIdx === 0 && (
+                        <span style={{
+                          position: 'absolute',
+                          top: '2px',
+                          left: '4px',
+                          fontSize: window.innerWidth > 768 ? '0.75rem' : '0.5rem',
+                          fontWeight: 'bold',
+                          color: isLight ? '#b58863' : '#f0d9b5',
+                          opacity: 0.7
+                        }}>
+                          {rank}
+                        </span>
+                      )}
+                      {settings.showCoordinates && rankIdx === 7 && (
+                        <span style={{
+                          position: 'absolute',
+                          bottom: '2px',
+                          right: '4px',
+                          fontSize: window.innerWidth > 768 ? '0.75rem' : '0.5rem',
+                          fontWeight: 'bold',
+                          color: isLight ? '#b58863' : '#f0d9b5',
+                          opacity: 0.7
+                        }}>
+                          {file}
+                        </span>
+                      )}
+
+                      {piece && showPiece && (
+                        <span style={{ 
+                          color: settings.monochrome 
+                            ? '#cbd5e1'
+                            : (piece.color === 'w' ? '#ffffff' : '#1a1a1a'),
+                          textShadow: piece.color === 'w' 
+                            ? '0 3px 8px rgba(0,0,0,0.6), 0 0 20px rgba(255,255,255,0.3)'
+                            : '0 2px 4px rgba(0,0,0,0.4)',
+                          userSelect: 'none',
+                          filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
+                          pointerEvents: 'none'
+                        }}>
+                          {settings.identicalPieces ? identicalPiece : pieces[pieceKey!]}
+                        </span>
+                      )}
+
+                      {isLegalMove && (
+                        <div style={{
+                          position: 'absolute',
+                          width: piece ? '70%' : (window.innerWidth > 768 ? '30px' : '20px'),
+                          height: piece ? '70%' : (window.innerWidth > 768 ? '30px' : '20px'),
+                          backgroundColor: 'rgba(34, 197, 94, 0.5)',
+                          borderRadius: piece ? '8px' : '50%',
+                          border: piece ? '3px solid #22c55e' : 'none',
+                          opacity: 0.85,
+                          pointerEvents: 'none',
+                          boxShadow: '0 0 20px rgba(34, 197, 94, 0.6)'
+                        }} />
+                      )}
+                    </div>
+                  )
+                })
+              )}
+
+              {engineThinking && (
+                <div style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(15, 23, 42, 0.95)',
+                  padding: window.innerWidth > 768 ? '2rem' : '1.5rem',
+                  borderRadius: '12px',
+                  border: '2px solid rgba(59, 130, 246, 0.5)',
+                  boxShadow: '0 0 40px rgba(59, 130, 246, 0.4)'
+                }}>
+                  <p style={{ 
+                    margin: 0, 
+                    fontSize: window.innerWidth > 768 ? '1.5rem' : '1.125rem',
+                    color: '#60a5fa',
+                    animation: 'pulse 1.5s infinite'
+                  }}>
+                    🤖 Pensando...
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            height: window.innerWidth > 768 ? '640px' : '60vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(15, 23, 42, 0.6)',
+            borderRadius: '12px',
+            border: '2px dashed rgba(148, 163, 184, 0.3)'
+          }}>
+            <div style={{ textAlign: 'center', padding: '1rem' }}>
+              <p style={{ fontSize: '3rem', margin: '0 0 1rem 0' }}>🙈</p>
+              <p style={{ fontSize: window.innerWidth > 768 ? '1.5rem' : '1.125rem', color: '#94a3b8' }}>
+                Modo Ciego Total
+              </p>
+              <p style={{ fontSize: '0.875rem', color: '#64748b', marginTop: '0.5rem' }}>
+                {engineThinking ? '🤖 Motor pensando...' : 'Usa input arriba ⬆️'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Info de turno y estado */}
+        <div style={{
+          display: 'flex',
+          gap: '0.75rem',
+          justifyContent: 'center',
+          flexWrap: 'wrap'
+        }}>
+          <div style={{
+            backgroundColor: 'rgba(30, 41, 59, 0.8)',
+            backdropFilter: 'blur(10px)',
+            padding: '0.75rem 1.5rem',
+            borderRadius: '12px',
+            border: '1px solid rgba(148, 163, 184, 0.2)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+          }}>
+            <p style={{ margin: 0, fontSize: window.innerWidth > 768 ? '1.125rem' : '0.875rem', fontWeight: '600' }}>
+              {game.turn() === 'w' ? '⚪ Blancas' : '⚫ Negras'}
+              {playingAgainstEngine && game.turn() === 'b' && ' (Motor)'}
+              {engineThinking && ' 🤖'}
             </p>
           </div>
 
-          {/* Input por teclado (siempre visible si está activado) */}
-          {settings.keyboardInput && (
+          {game.isCheck() && !game.isGameOver() && (
             <div style={{
-              backgroundColor: 'rgba(30, 41, 59, 0.9)',
-              backdropFilter: 'blur(10px)',
+              backgroundColor: 'rgba(220, 38, 38, 0.9)',
+              padding: '0.75rem 1.5rem',
               borderRadius: '12px',
-              padding: '1.5rem',
-              border: '2px solid rgba(59, 130, 246, 0.5)',
-              boxShadow: '0 8px 24px rgba(59, 130, 246, 0.3)'
+              animation: 'pulse 2s infinite',
+              boxShadow: '0 0 20px rgba(220, 38, 38, 0.5)'
             }}>
-              <h3 style={{ 
-                fontSize: '1.25rem', 
-                fontWeight: 'bold', 
-                marginBottom: '1rem',
-                color: '#60a5fa'
-              }}>
-                ⌨️ Input por Teclado
-              </h3>
-              
-              <form onSubmit={handleKeyboardMove} style={{ display: 'flex', gap: '0.75rem' }}>
-                <input
-                  type="text"
-                  value={keyboardMove}
-                  onChange={(e) => setKeyboardMove(e.target.value)}
-                  placeholder="e4, Nf3, e2e4..."
-                  disabled={engineThinking || (playingAgainstEngine && game.turn() === 'b')}
-                  autoFocus
-                  style={{
-                    flex: 1,
-                    padding: '1rem',
-                    fontSize: '1.125rem',
-                    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-                    border: '2px solid rgba(148, 163, 184, 0.3)',
-                    borderRadius: '8px',
-                    color: 'white',
-                    outline: 'none',
-                    fontFamily: 'ui-monospace, monospace'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = 'rgba(59, 130, 246, 0.6)'
-                    e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)'
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'rgba(148, 163, 184, 0.3)'
-                    e.target.style.boxShadow = 'none'
-                  }}
-                />
-                <button
-                  type="submit"
-                  disabled={!keyboardMove.trim() || engineThinking}
-                  style={{
-                    padding: '1rem 2rem',
-                    background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '1rem',
-                    fontWeight: '600',
-                    cursor: keyboardMove.trim() && !engineThinking ? 'pointer' : 'not-allowed',
-                    opacity: keyboardMove.trim() && !engineThinking ? 1 : 0.5,
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  ▶️ Mover
-                </button>
-              </form>
-
-              {keyboardError && (
-                <p style={{
-                  marginTop: '0.75rem',
-                  color: '#ef4444',
-                  fontSize: '0.875rem',
-                  fontWeight: '600'
-                }}>
-                  {keyboardError}
-                </p>
-              )}
-
-              <div style={{
-                marginTop: '1rem',
-                padding: '0.75rem',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                borderRadius: '6px',
-                fontSize: '0.75rem',
-                color: '#94a3b8',
-                lineHeight: '1.5'
-              }}>
-                <p style={{ margin: '0.25rem 0', fontWeight: '600', color: '#60a5fa' }}>
-                  💡 Formatos aceptados:
-                </p>
-                <p style={{ margin: '0.25rem 0' }}>
-                  • <strong>SAN:</strong> e4, Nf3, O-O, Qxd5+
-                </p>
-                <p style={{ margin: '0.25rem 0' }}>
-                  • <strong>LAN:</strong> e2e4, g1f3, e7e8q
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Tablero */}
-          {settings.showBoard ? (
-            <div style={{
-              display: 'flex',
-              justifyContent: 'center',
-              perspective: '1000px'
-            }}>
-              <div 
-                key={boardKey}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(8, 80px)',
-                  gridTemplateRows: 'repeat(8, 80px)',
-                  border: '6px solid rgba(148, 163, 184, 0.3)',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  boxShadow: `
-                    0 0 40px rgba(59, 130, 246, 0.3),
-                    0 20px 60px rgba(0, 0, 0, 0.5),
-                    inset 0 0 0 1px rgba(255, 255, 255, 0.1)
-                  `,
-                  position: 'relative',
-                  opacity: engineThinking ? 0.6 : 1,
-                  transition: 'opacity 0.3s'
-                }}>
-                {ranks.map((rank, rankIdx) =>
-                  files.map((file, fileIdx) => {
-                    const square = `${file}${rank}`
-                    const piece = board[rankIdx][fileIdx]
-                    const isLight = (rankIdx + fileIdx) % 2 === 0
-                    const isSelected = selectedSquare === square
-                    const isLegalMove = legalMoves.includes(square)
-                    const showPiece = shouldShowPiece(piece)
-                    const pieceKey = piece ? `${piece.color}${piece.type}` : null
-
-                    return (
-                      <div
-                        key={square}
-                        onClick={() => handleSquareClick(square)}
-                        style={{
-                          backgroundColor: settings.monochrome 
-                            ? (isLight ? '#64748b' : '#334155')
-                            : (isLight ? '#f0d9b5' : '#b58863'),
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '4rem',
-                          cursor: engineThinking ? 'wait' : 'pointer',
-                          position: 'relative',
-                          outline: isSelected ? '4px solid #3b82f6' : 'none',
-                          outlineOffset: '-4px',
-                          transition: 'all 0.2s ease',
-                          boxShadow: isSelected ? 'inset 0 0 20px rgba(59, 130, 246, 0.3)' : 'none'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected && !engineThinking) {
-                            e.currentTarget.style.filter = 'brightness(1.2)'
-                            e.currentTarget.style.transform = 'scale(1.05)'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.filter = 'brightness(1)'
-                          e.currentTarget.style.transform = 'scale(1)'
-                        }}
-                      >
-                        {settings.showCoordinates && fileIdx === 0 && (
-                          <span style={{
-                            position: 'absolute',
-                            top: '4px',
-                            left: '6px',
-                            fontSize: '0.75rem',
-                            fontWeight: 'bold',
-                            color: isLight ? '#b58863' : '#f0d9b5',
-                            opacity: 0.7
-                          }}>
-                            {rank}
-                          </span>
-                        )}
-                        {settings.showCoordinates && rankIdx === 7 && (
-                          <span style={{
-                            position: 'absolute',
-                            bottom: '4px',
-                            right: '6px',
-                            fontSize: '0.75rem',
-                            fontWeight: 'bold',
-                            color: isLight ? '#b58863' : '#f0d9b5',
-                            opacity: 0.7
-                          }}>
-                            {file}
-                          </span>
-                        )}
-
-                        {piece && showPiece && (
-                          <span style={{ 
-                            color: settings.monochrome 
-                              ? '#cbd5e1'
-                              : (piece.color === 'w' ? '#ffffff' : '#1a1a1a'),
-                            textShadow: piece.color === 'w' 
-                              ? '0 3px 8px rgba(0,0,0,0.6), 0 0 20px rgba(255,255,255,0.3)'
-                              : '0 2px 4px rgba(0,0,0,0.4)',
-                            userSelect: 'none',
-                            filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
-                            transition: 'transform 0.2s ease'
-                          }}>
-                            {settings.identicalPieces ? identicalPiece : pieces[pieceKey!]}
-                          </span>
-                        )}
-
-                        {isLegalMove && (
-                          <div style={{
-                            position: 'absolute',
-                            width: piece ? '70%' : '30px',
-                            height: piece ? '70%' : '30px',
-                            backgroundColor: 'rgba(34, 197, 94, 0.5)',
-                            borderRadius: piece ? '8px' : '50%',
-                            border: piece ? '3px solid #22c55e' : 'none',
-                            opacity: 0.85,
-                            pointerEvents: 'none',
-                            boxShadow: '0 0 20px rgba(34, 197, 94, 0.6)'
-                          }} />
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-
-                {engineThinking && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    background: 'rgba(15, 23, 42, 0.95)',
-                    padding: '2rem',
-                    borderRadius: '12px',
-                    border: '2px solid rgba(59, 130, 246, 0.5)',
-                    boxShadow: '0 0 40px rgba(59, 130, 246, 0.4)'
-                  }}>
-                    <p style={{ 
-                      margin: 0, 
-                      fontSize: '1.5rem',
-                      color: '#60a5fa',
-                      animation: 'pulse 1.5s infinite'
-                    }}>
-                      🤖 Pensando...
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div style={{
-              height: '640px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(15, 23, 42, 0.6)',
-              borderRadius: '12px',
-              border: '2px dashed rgba(148, 163, 184, 0.3)'
-            }}>
-              <div style={{ textAlign: 'center' }}>
-                <p style={{ fontSize: '4rem', margin: '0 0 1rem 0' }}>🙈</p>
-                <p style={{ fontSize: '1.5rem', color: '#94a3b8' }}>
-                  Modo Ciego Total Activado
-                </p>
-                <p style={{ fontSize: '0.875rem', color: '#64748b', marginTop: '0.5rem' }}>
-                  {engineThinking ? '🤖 El motor está pensando...' : 'Usa el input por teclado arriba ⬆️'}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Info de turno */}
-          <div style={{
-            display: 'flex',
-            gap: '1rem',
-            justifyContent: 'center',
-            flexWrap: 'wrap'
-          }}>
-            <div style={{
-              backgroundColor: 'rgba(30, 41, 59, 0.8)',
-              backdropFilter: 'blur(10px)',
-              padding: '1rem 2rem',
-              borderRadius: '12px',
-              border: '1px solid rgba(148, 163, 184, 0.2)',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
-            }}>
-              <p style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600' }}>
-                Turno: {game.turn() === 'w' ? '⚪ Blancas (Tú)' : '⚫ Negras' + (playingAgainstEngine ? ' (Motor)' : '')}
-                {engineThinking && ' 🤖'}
+              <p style={{ margin: 0, fontSize: window.innerWidth > 768 ? '1.125rem' : '0.875rem', fontWeight: 'bold' }}>
+                ⚠️ ¡JAQUE!
               </p>
             </div>
+          )}
 
-            {game.isCheck() && !game.isGameOver() && (
-              <div style={{
-                backgroundColor: 'rgba(220, 38, 38, 0.9)',
-                padding: '1rem 2rem',
-                borderRadius: '12px',
-                animation: 'pulse 2s infinite',
-                boxShadow: '0 0 20px rgba(220, 38, 38, 0.5)'
-              }}>
-                <p style={{ margin: 0, fontSize: '1.125rem', fontWeight: 'bold' }}>
-                  ⚠️ ¡JAQUE!
-                </p>
-              </div>
-            )}
-
-            {game.isGameOver() && (
-              <div style={{
-                backgroundColor: 'rgba(22, 163, 74, 0.9)',
-                padding: '1rem 2rem',
-                borderRadius: '12px',
-                boxShadow: '0 0 20px rgba(22, 163, 74, 0.5)'
-              }}>
-                <p style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold' }}>
-                  {game.isCheckmate() ? 
-                    (game.turn() === 'w' ? '👑 ¡Ganaste! (Mate)' : '💀 Perdiste (Mate)') : 
-                   game.isDraw() ? '🤝 Tablas' : '🏁 Fin'}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Botones */}
-          <div style={{
-            display: 'flex',
-            gap: '1rem',
-            justifyContent: 'center',
-            flexWrap: 'wrap'
-          }}>
-            <button
-              onClick={resetGame}
-              style={{
-                padding: '1rem 2rem',
-                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontSize: '1rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-2px)'
-                e.currentTarget.style.boxShadow = '0 8px 20px rgba(59, 130, 246, 0.6)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)'
-                e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4)'
-              }}
-            >
-              🔄 Nueva Partida
-            </button>
-
-            <button
-              onClick={toggleEnginePlay}
-              disabled={!engine}
-              style={{
-                padding: '1rem 2rem',
-                background: playingAgainstEngine 
-                  ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
-                  : 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontSize: '1rem',
-                fontWeight: '600',
-                cursor: engine ? 'pointer' : 'not-allowed',
-                opacity: engine ? 1 : 0.5,
-                boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                if (engine) {
-                  e.currentTarget.style.transform = 'translateY(-2px)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)'
-              }}
-            >
-              {playingAgainstEngine ? '✅ Vs Motor' : '🤖 Jugar vs Motor'}
-            </button>
-          </div>
+          {game.isGameOver() && (
+            <div style={{
+              backgroundColor: 'rgba(22, 163, 74, 0.9)',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '12px',
+              boxShadow: '0 0 20px rgba(22, 163, 74, 0.5)'
+            }}>
+              <p style={{ margin: 0, fontSize: window.innerWidth > 768 ? '1.25rem' : '1rem', fontWeight: 'bold' }}>
+                {game.isCheckmate() ? 
+                  (game.turn() === 'w' ? '👑 ¡Ganaste!' : '💀 Perdiste') : 
+                 game.isDraw() ? '🤝 Tablas' : '🏁 Fin'}
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* COLUMNA DERECHA */}
+        {/* Botones */}
+        <div style={{
+          display: 'flex',
+          gap: '0.75rem',
+          justifyContent: 'center',
+          flexWrap: 'wrap'
+        }}>
+          <button
+            onClick={resetGame}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: window.innerWidth > 768 ? '1rem' : '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
+              touchAction: 'manipulation'
+            }}
+          >
+            🔄 Nueva Partida
+          </button>
+
+          <button
+            onClick={toggleEnginePlay}
+            disabled={!engine}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: playingAgainstEngine 
+                ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+                : 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: window.innerWidth > 768 ? '1rem' : '0.875rem',
+              fontWeight: '600',
+              cursor: engine ? 'pointer' : 'not-allowed',
+              opacity: engine ? 1 : 0.5,
+              boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)',
+              touchAction: 'manipulation'
+            }}
+          >
+            {playingAgainstEngine ? '✅ Vs Motor' : '🤖 Vs Motor'}
+          </button>
+        </div>
+
+        {/* Historial en móvil */}
+        {window.innerWidth <= 768 && moveHistory.length > 0 && (
+          <div style={{
+            backgroundColor: 'rgba(30, 41, 59, 0.8)',
+            backdropFilter: 'blur(10px)',
+            borderRadius: '12px',
+            padding: '1rem',
+            border: '1px solid rgba(148, 163, 184, 0.2)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            maxHeight: '200px',
+            overflowY: 'auto'
+          }}>
+            <h3 style={{ 
+              fontSize: '1rem',
+              fontWeight: '600',
+              marginBottom: '0.75rem',
+              color: '#60a5fa'
+            }}>
+              📜 Historial ({moveHistory.length})
+            </h3>
+            <div style={{ 
+              fontFamily: 'ui-monospace, monospace', 
+              fontSize: '0.75rem',
+              color: '#cbd5e1',
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '0.25rem'
+            }}>
+              {moveHistory.map((move, idx) => {
+                const moveNum = Math.floor(idx / 2) + 1
+                const isWhite = idx % 2 === 0
+                return (
+                  <div key={idx} style={{ 
+                    padding: '0.25rem 0.5rem',
+                    background: 'rgba(148, 163, 184, 0.1)',
+                    borderRadius: '4px'
+                  }}>
+                    {isWhite && <span style={{ color: '#64748b', fontWeight: '600' }}>{moveNum}. </span>}
+                    <span style={{ color: isWhite ? '#93c5fd' : '#fbbf24', marginLeft: '0.25rem' }}>
+                      {move}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* COLUMNA DERECHA (solo desktop) */}
+      {window.innerWidth > 768 && (
         <div style={{
           display: 'flex',
           flexDirection: 'column',
           gap: '1.5rem'
         }}>
           
-          {/* Control del Motor */}
+          {/* Panel del Motor */}
           {engine && (
             <div style={{
               backgroundColor: 'rgba(30, 41, 59, 0.8)',
@@ -763,12 +448,12 @@ const playMoveSound = (move: any) => {
               boxShadow: '0 8px 24px rgba(0,0,0,0.3)'
             }}>
               <h2 style={{ 
-                fontSize: '1.5rem', 
+                fontSize: '1.5rem',
                 fontWeight: 'bold', 
                 marginBottom: '1rem',
                 color: '#a78bfa'
               }}>
-                🤖 Motor Stockfish
+                🤖 Motor
               </h2>
 
               <div style={{ marginBottom: '1rem' }}>
@@ -813,20 +498,15 @@ const playMoveSound = (move: any) => {
                 </div>
               </div>
 
-              <p style={{
-                fontSize: '0.75rem',
-                color: '#94a3b8',
-                margin: 0,
-                lineHeight: '1.5'
-              }}>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, lineHeight: '1.5' }}>
                 {playingAgainstEngine 
-                  ? '✅ Jugando contra el motor (tú Blancas, motor Negras)'
-                  : '💡 Click en "Jugar vs Motor" para empezar'}
+                  ? '✅ Jugando vs motor (Negras)'
+                  : '💡 Click "Vs Motor"'}
               </p>
             </div>
           )}
 
-          {/* Panel de Controles Visuales */}
+          {/* Panel de Controles */}
           <div style={{
             backgroundColor: 'rgba(30, 41, 59, 0.8)',
             backdropFilter: 'blur(10px)',
@@ -836,18 +516,18 @@ const playMoveSound = (move: any) => {
             boxShadow: '0 8px 24px rgba(0,0,0,0.3)'
           }}>
             <h2 style={{ 
-              fontSize: '1.5rem', 
+              fontSize: '1.5rem',
               fontWeight: 'bold', 
               marginBottom: '1.5rem',
               color: '#60a5fa'
             }}>
-              ⚙️ Controles Visuales
+              ⚙️ Controles
             </h2>
 
             {/* Presets */}
             <div style={{ marginBottom: '1.5rem' }}>
               <p style={{ fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.75rem' }}>
-                Presets rápidos:
+                Presets:
               </p>
               <div style={{
                 display: 'grid',
@@ -870,14 +550,7 @@ const playMoveSound = (move: any) => {
                       border: '1px solid rgba(59, 130, 246, 0.3)',
                       borderRadius: '6px',
                       fontSize: '0.875rem',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(59, 130, 246, 0.3)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)'
+                      cursor: 'pointer'
                     }}
                   >
                     {preset.name}
@@ -890,12 +563,12 @@ const playMoveSound = (move: any) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {[
                 { label: 'Mostrar tablero', key: 'showBoard' },
-                { label: 'Mostrar coordenadas', key: 'showCoordinates' },
-                { label: 'Mostrar piezas propias', key: 'showOwnPieces' },
-                { label: 'Mostrar piezas rivales', key: 'showOpponentPieces' },
-                { label: 'Modo monocromo', key: 'monochrome' },
+                { label: 'Coordenadas', key: 'showCoordinates' },
+                { label: 'Piezas propias', key: 'showOwnPieces' },
+                { label: 'Piezas rivales', key: 'showOpponentPieces' },
+                { label: 'Monocromo', key: 'monochrome' },
                 { label: 'Fichas idénticas', key: 'identicalPieces' },
-                { label: 'Input por teclado', key: 'keyboardInput' },
+                { label: 'Input teclado', key: 'keyboardInput' },
                 { label: 'Sonidos', key: 'sounds' }
               ].map(toggle => (
                 <label
@@ -906,14 +579,7 @@ const playMoveSound = (move: any) => {
                     gap: '0.75rem',
                     cursor: 'pointer',
                     padding: '0.5rem',
-                    borderRadius: '6px',
-                    transition: 'background 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(148, 163, 184, 0.1)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'transparent'
+                    borderRadius: '6px'
                   }}
                 >
                   <input
@@ -938,7 +604,7 @@ const playMoveSound = (move: any) => {
             </div>
           </div>
 
-          {/* Historial */}
+          {/* Historial desktop */}
           {moveHistory.length > 0 && (
             <div style={{
               backgroundColor: 'rgba(30, 41, 59, 0.8)',
@@ -951,12 +617,12 @@ const playMoveSound = (move: any) => {
               overflowY: 'auto'
             }}>
               <h3 style={{ 
-                fontSize: '1.25rem', 
+                fontSize: '1.25rem',
                 fontWeight: '600',
                 marginBottom: '1rem',
                 color: '#60a5fa'
               }}>
-                📜 Historial ({moveHistory.length} jugadas)
+                📜 Historial ({moveHistory.length})
               </h3>
               <div style={{ 
                 fontFamily: 'ui-monospace, monospace', 
@@ -975,15 +641,8 @@ const playMoveSound = (move: any) => {
                       background: 'rgba(148, 163, 184, 0.1)',
                       borderRadius: '4px'
                     }}>
-                      {isWhite && (
-                        <span style={{ color: '#64748b', fontWeight: '600' }}>
-                          {moveNum}. 
-                        </span>
-                      )}
-                      <span style={{ 
-                        color: isWhite ? '#93c5fd' : '#fbbf24',
-                        marginLeft: '0.25rem'
-                      }}>
+                      {isWhite && <span style={{ color: '#64748b', fontWeight: '600' }}>{moveNum}. </span>}
+                      <span style={{ color: isWhite ? '#93c5fd' : '#fbbf24', marginLeft: '0.25rem' }}>
                         {move}
                       </span>
                     </div>
@@ -993,53 +652,184 @@ const playMoveSound = (move: any) => {
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.7; }
-        }
-        
-        ::-webkit-scrollbar {
-          width: 8px;
-        }
-        ::-webkit-scrollbar-track {
-          background: rgba(15, 23, 42, 0.5);
-          border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb {
-          background: rgba(59, 130, 246, 0.5);
-          border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-          background: rgba(59, 130, 246, 0.7);
-        }
+      {/* Panel móvil de controles (abajo) */}
+      {window.innerWidth <= 768 && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1rem',
+          marginTop: '1rem'
+        }}>
+          
+          {/* Control del motor en móvil */}
+          {engine && (
+            <div style={{
+              backgroundColor: 'rgba(30, 41, 59, 0.8)',
+              borderRadius: '12px',
+              padding: '1rem',
+              border: '1px solid rgba(148, 163, 184, 0.2)'
+            }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 'bold', marginBottom: '0.75rem', color: '#a78bfa' }}>
+                🤖 Nivel: {engineLevel}
+              </h3>
+              <input
+                type="range"
+                min="0"
+                max="20"
+                value={engineLevel}
+                onChange={(e) => setEngineLevel(Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  height: '8px',
+                  borderRadius: '4px',
+                  background: 'linear-gradient(to right, #22c55e, #eab308, #ef4444)'
+                }}
+              />
+              <p style={{ fontSize: '0.75rem', color: '#a78bfa', marginTop: '0.5rem' }}>
+                {getLevelName(engineLevel)}
+              </p>
+            </div>
+          )}
 
-        input[type="range"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          background: #3b82f6;
-          cursor: pointer;
-          border: 2px solid white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
+          {/* Toggles en acordeón móvil */}
+          <details style={{
+            backgroundColor: 'rgba(30, 41, 59, 0.8)',
+            borderRadius: '12px',
+            padding: '1rem',
+            border: '1px solid rgba(148, 163, 184, 0.2)'
+          }}>
+            <summary style={{
+              fontSize: '1.125rem',
+              fontWeight: 'bold',
+              color: '#60a5fa',
+              cursor: 'pointer',
+              listStyle: 'none',
+              userSelect: 'none'
+            }}>
+              ⚙️ Opciones de Vista
+            </summary>
+            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {[
+                { label: 'Tablero', key: 'showBoard' },
+                { label: 'Coordenadas', key: 'showCoordinates' },
+                { label: 'Mis piezas', key: 'showOwnPieces' },
+                { label: 'Piezas rival', key: 'showOpponentPieces' },
+                { label: 'Monocromo', key: 'monochrome' },
+                { label: 'Idénticas', key: 'identicalPieces' },
+                { label: 'Teclado', key: 'keyboardInput' },
+                { label: 'Sonidos', key: 'sounds' }
+              ].map(toggle => (
+                <label
+                  key={toggle.key}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    cursor: 'pointer',
+                    padding: '0.5rem',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(148, 163, 184, 0.05)'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={settings[toggle.key as keyof typeof settings]}
+                    onChange={(e) => setSettings({ ...settings, [toggle.key]: e.target.checked })}
+                    style={{ width: '20px', height: '20px', cursor: 'pointer', accentColor: '#3b82f6' }}
+                  />
+                  <span style={{ fontSize: '0.875rem', color: '#cbd5e1' }}>
+                    {toggle.label}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </details>
 
-        input[type="range"]::-moz-range-thumb {
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          background: #3b82f6;
-          cursor: pointer;
-          border: 2px solid white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-      `}</style>
+          {/* Presets en móvil */}
+          <div style={{
+            backgroundColor: 'rgba(30, 41, 59, 0.8)',
+            borderRadius: '12px',
+            padding: '1rem',
+            border: '1px solid rgba(148, 163, 184, 0.2)'
+          }}>
+            <p style={{ fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.75rem' }}>
+              Presets rápidos:
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+              {[
+                { name: 'Ciego', key: 'blind' },
+                { name: 'Semi', key: 'semi' },
+                { name: 'Rival', key: 'rival' },
+                { name: 'Mono', key: 'mono' }
+              ].map(preset => (
+                <button
+                  key={preset.key}
+                  onClick={() => applyPreset(preset.key)}
+                  style={{
+                    padding: '0.75rem',
+                    background: 'rgba(59, 130, 246, 0.2)',
+                    color: '#93c5fd',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    cursor: 'pointer',
+                    touchAction: 'manipulation'
+                  }}
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  )
-}
 
-export default App
+    <style>{`
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+      
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(59, 130, 246, 0.5);
+        border-radius: 4px;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #3b82f6;
+        cursor: pointer;
+        border: 2px solid white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      }
+
+      details > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details > summary::before {
+        content: '▶';
+        display: inline-block;
+        margin-right: 0.5rem;
+        transition: transform 0.2s;
+      }
+
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+    `}</style>
+  </div>
+)
