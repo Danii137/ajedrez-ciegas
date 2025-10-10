@@ -151,7 +151,8 @@ const [settings, setSettings] = useState({
 
 
   const selectSquare = (square: string) => {
-    const moves = game.moves({ square, verbose: true })
+  try {
+    const moves = game.moves({ square: square as any, verbose: true })
     if (moves.length > 0) {
       setSelectedSquare(square)
       setLegalMoves(moves.map((m: any) => m.to))
@@ -159,7 +160,14 @@ const [settings, setSettings] = useState({
       setSelectedSquare(null)
       setLegalMoves([])
     }
+  } catch {
+    setSelectedSquare(null)
+    setLegalMoves([])
   }
+}
+
+
+
 
   const handleKeyboardMove = (e: React.FormEvent) => {
   e.preventDefault()
