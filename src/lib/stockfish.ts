@@ -3,8 +3,7 @@
 // Si falla (entorno no soportado o carga), cae al motor simplificado incluido.
 
 import { Chess } from 'chess.js'
-import stockfishScriptUrl from 'stockfish/src/stockfish-17.1-lite-single-03e3232.js?url'
-import stockfishWasmUrl from 'stockfish/src/stockfish-17.1-lite-single-03e3232.wasm?url'
+const STOCKFISH_SCRIPT_URL = '/stockfish/stockfish.js'
 
 type WorkerLike = {
   postMessage: (msg: any) => void
@@ -40,16 +39,24 @@ class RealStockfish {
   private worker: WorkerLike | null = null
   private ready = false
   private readyListenerAttached = false
-  private blobUrl: string | null = null
   private currentSkillLevel = -1
   private strongMode = false
+  private engineName = 'Desconocido'
 
   private readonly readyHandler = (ev: MessageEvent<any>) => {
     const payload = ev && 'data' in ev ? ev.data : ev
 
     if (typeof payload === 'string') {
-      if (payload.includes('uciok') || payload.includes('readyok') || payload.includes('bestmove')) {
-        this.ready = true
+      const lines = payload.split(/\r?\n/)
+      for (const line of lines) {
+        if (!line) continue
+        const trimmed = line.trim()
+        if (trimmed.includes('uciok') || trimmed.includes('readyok') || trimmed.startsWith('bestmove')) {
+          this.ready = true
+        }
+        if (trimmed.toLowerCase().startsWith('id name')) {
+          this.engineName = trimmed.substring('id name'.length).trim()
+        }
       }
       return
     }
@@ -95,12 +102,9 @@ class RealStockfish {
     this.worker = null
     this.readyListenerAttached = false
     this.ready = false
-    if (this.blobUrl) {
-      try { URL.revokeObjectURL(this.blobUrl) } catch (e) {}
-      this.blobUrl = null
-    }
     this.currentSkillLevel = -1
     this.strongMode = false
+    this.engineName = 'Desconocido'
   }
 
   async init() {
@@ -110,6 +114,7 @@ class RealStockfish {
     try {
       this.worker = this.createWorkerFromAssets()
       await this.handshake()
+      await this.ensureEngineIdentity()
       return
     } catch (err) {
       console.warn('No se pudo iniciar Stockfish desde assets locales:', err)
@@ -121,42 +126,39 @@ class RealStockfish {
   }
 
   private createWorkerFromAssets(): WorkerLike {
-    const workerSource = `
-      const wasmUrl = '${stockfishWasmUrl}';
-      try {
-        importScripts('${stockfishScriptUrl}');
-      } catch (e) {
-        postMessage({ error: 'importScripts failed', detail: String(e) });
-        throw e;
-      }
+    const worker = new Worker(STOCKFISH_SCRIPT_URL) as unknown as WorkerLike
+    return worker
+  }
 
-      const engine = self.Stockfish({
-        locateFile(path) {
-          if (typeof path === 'string' && path.endsWith('.wasm')) return wasmUrl;
-          return path;
-        }
-      });
+  get name() {
+    return this.engineName
+  }
 
-      engine.onmessage = function (event) {
-        try { postMessage(event.data); } catch (err) { /* ignore */ }
-      };
+  private async ensureEngineIdentity() {
+    try {
+      await this.waitUntilReady(8000)
+    } catch (err) {
+      throw err
+    }
 
-      onmessage = function (event) {
-        try { engine.postMessage(event.data); } catch (err) { /* ignore */ }
-      };
+    if (!this.engineName || !this.engineName.toLowerCase().includes('stockfish')) {
+      throw new Error(`Stockfish no respondió correctamente (identificado como "${this.engineName}")`)
+    }
 
-      try {
-        engine.postMessage('uci');
-        engine.postMessage('isready');
-      } catch (err) {
-        try { postMessage({ error: String(err) }); } catch (_) {}
-      }
-    `
+    try {
+      this.worker?.postMessage('ucinewgame')
+      await this.waitUntilReady(5000)
+    } catch (err) {
+      console.warn('No se pudo enviar ucinewgame inicial:', err)
+    }
+  }
 
-    const blob = new Blob([workerSource], { type: 'application/javascript' })
-    const blobUrl = URL.createObjectURL(blob)
-    this.blobUrl = blobUrl
-    return new Worker(blobUrl) as unknown as WorkerLike
+  private async waitUntilReady(timeout = 5000) {
+    this.ready = false
+    try { this.worker?.postMessage('isready') } catch (err) {
+      throw err
+    }
+    await waitFor(() => this.ready, timeout)
   }
 
   send(cmd: string) {
@@ -176,27 +178,7 @@ class RealStockfish {
 
     const clampedLevel = Math.max(0, Math.min(20, Math.round(level)))
     if (clampedLevel !== this.currentSkillLevel) {
-      try {
-        worker.postMessage(`setoption name Skill Level value ${clampedLevel}`)
-
-        if (clampedLevel < 20) {
-          const elo = Math.round(800 + (clampedLevel / 20) * 1800)
-          worker.postMessage('setoption name UCI_LimitStrength value true')
-          worker.postMessage(`setoption name UCI_Elo value ${elo}`)
-          worker.postMessage('setoption name Slow Mover value 80')
-          worker.postMessage('setoption name Hash value 64')
-          this.strongMode = false
-        } else {
-          worker.postMessage('setoption name UCI_LimitStrength value false')
-          worker.postMessage('setoption name Slow Mover value 100')
-          worker.postMessage('setoption name Hash value 256')
-          worker.postMessage('setoption name Threads value 1')
-          this.strongMode = true
-        }
-        worker.postMessage('isready')
-      } catch (err) {
-        // ignore
-      }
+      await this.configureStrength(worker, clampedLevel)
       this.currentSkillLevel = clampedLevel
     }
 
@@ -270,6 +252,39 @@ class RealStockfish {
     })
   }
 
+  private async configureStrength(worker: WorkerLike, level: number) {
+    const commands: string[] = []
+
+    // Siempre partimos de la fuerza máxima y luego limitamos si hace falta
+    commands.push('setoption name UCI_LimitStrength value false')
+    commands.push('setoption name Skill Level value 20')
+    commands.push('setoption name Slow Mover value 100')
+    commands.push('setoption name Hash value 256')
+    commands.push('setoption name Threads value 1')
+
+    if (level < 20) {
+      const elo = Math.round(800 + (level / 20) * 1800)
+      commands.push('setoption name UCI_LimitStrength value true')
+      commands.push(`setoption name UCI_Elo value ${elo}`)
+      commands.push(`setoption name Skill Level value ${level}`)
+      commands.push('setoption name Slow Mover value 80')
+      commands.push('setoption name Hash value 128')
+      this.strongMode = false
+    } else {
+      this.strongMode = true
+    }
+
+    for (const cmd of commands) {
+      try { worker.postMessage(cmd) } catch (err) { console.warn('No se pudo aplicar opción Stockfish:', cmd, err) }
+    }
+
+    try {
+      await this.waitUntilReady(level === 20 ? 12000 : 6000)
+    } catch (err) {
+      console.warn('Timeout esperando ready tras setoption:', err)
+    }
+  }
+
   destroy() {
     this.cleanupWorker()
   }
@@ -277,6 +292,8 @@ class RealStockfish {
 
 // Fallback: motor simplificado existente
 class SimpleEngine {
+  readonly engineName = 'Motor simplificado'
+
   async init() {
     console.log('\u2705 Motor simplificado listo')
   }
@@ -323,6 +340,10 @@ class SimpleEngine {
   }
 
   destroy() {}
+
+  get name() {
+    return this.engineName
+  }
 }
 
 function evaluatePosition(game: Chess): number {
@@ -368,4 +389,5 @@ export type StockfishEngine = {
   send: (cmd: string) => void
   getBestMove: (fen: string, level: number) => Promise<string>
   destroy: () => void
+  name: string
 }

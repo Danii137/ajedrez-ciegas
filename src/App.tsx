@@ -465,7 +465,7 @@ function App() {
               ♟️ Ajedrez a Ciegas
             </h1>
             <p style={{ color: '#94a3b8', marginTop: '0.5rem' }}>
-              {engine ? '✅ Motor Stockfish cargado' : '⏳ Cargando motor...'}
+              {engine ? `✅ Motor listo: ${engine.name}` : '⏳ Cargando motor...'}
             </p>
           </div>
 
