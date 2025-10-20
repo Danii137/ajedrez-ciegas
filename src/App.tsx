@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { useState, useEffect } from 'react'
 import { Chess } from 'chess.js'
-import { getStockfish, StockfishEngine } from './lib/stockfish'
+import { getStockfish } from './lib/stockfish'
+import type { StockfishEngine } from './lib/stockfish'
 import { getSounds } from './lib/sounds'
 
 function App() {
@@ -15,9 +16,15 @@ function App() {
   const [engineLevel, setEngineLevel] = useState(5)
   const [playingAgainstEngine, setPlayingAgainstEngine] = useState(false)
   const [engineThinking, setEngineThinking] = useState(false)
-  
+
   const [keyboardMove, setKeyboardMove] = useState('')
   const [keyboardError, setKeyboardError] = useState('')
+
+  const [showSplash, setShowSplash] = useState(true)
+  const splashImage = new URL('./assets/daniel-alonso-gomez.jpg', import.meta.url).href
+  const fallbackSplashImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOEAAADhCAQAAABWA1nAAAAACXBIWXMAAAsTAAALEwEAmpwYAAACfUlEQVR4nO3dv27cMBAG0CSIBjKQrEmUtAapQJMYblJRk0J9CErRg7Cg9K9iN4zi0n/B/x59ZvxGAAAAAIDf8x7DHsMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAx4DHgMeAz7bfsT7EvYT9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv2C/YL9gv0C4z6jvt9v3wIAAAAAAABAUcAX5S7F4t8AAAAASUVORK5CYII='
+
+  const dismissSplash = () => setShowSplash(false)
   
   const [settings, setSettings] = useState({
     showBoard: true,
@@ -83,7 +90,8 @@ function App() {
       !game.isGameOver() && 
       engine &&
       !engineThinking &&
-      moveHistory.length > 0
+      moveHistory.length > 0 &&
+      !showSplash
 
     if (shouldEngineMove) {
       const timer = setTimeout(() => {
@@ -91,7 +99,13 @@ function App() {
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [moveHistory.length, playingAgainstEngine, engineThinking])
+  }, [moveHistory.length, playingAgainstEngine, engineThinking, showSplash])
+
+  useEffect(() => {
+    if (!showSplash) return
+    const timer = setTimeout(() => setShowSplash(false), 3500)
+    return () => clearTimeout(timer)
+  }, [showSplash])
 
   const makeEngineMove = async () => {
     if (!engine || engineThinking) return
@@ -312,6 +326,120 @@ function App() {
       padding: isMobile ? '1rem' : '2rem',
       fontFamily: 'system-ui, -apple-system, sans-serif'
     }}>
+      {showSplash && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'radial-gradient(circle at center, rgba(15,23,42,0.95) 0%, rgba(2,6,23,0.98) 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '2rem',
+            cursor: 'pointer'
+          }}
+          onClick={dismissSplash}
+        >
+          <div
+            style={{
+              width: 'min(90vw, 520px)',
+              background: 'rgba(15, 23, 42, 0.85)',
+              borderRadius: '20px',
+              border: '1px solid rgba(148, 163, 184, 0.3)',
+              boxShadow: '0 25px 60px rgba(15, 23, 42, 0.6)',
+              padding: '2.5rem 2rem',
+              textAlign: 'center',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: '180px',
+                height: '180px',
+                borderRadius: '50%',
+                overflow: 'hidden',
+                margin: '0 auto 1.5rem',
+                border: '4px solid rgba(96, 165, 250, 0.7)',
+                boxShadow: '0 12px 30px rgba(37, 99, 235, 0.35)'
+              }}
+            >
+              <img
+                src={splashImage}
+                alt="Retrato de Daniel Alonso Gómez"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(event) => {
+                  const img = event.currentTarget
+                  if (img.src !== fallbackSplashImage) {
+                    img.src = fallbackSplashImage
+                  }
+                }}
+              />
+            </div>
+
+            <h1 style={{
+              fontSize: '2.25rem',
+              margin: 0,
+              fontWeight: 700,
+              background: 'linear-gradient(to right, #60a5fa, #a78bfa)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text'
+            }}>
+              Daniel Alonso Gómez
+            </h1>
+
+            <p style={{
+              marginTop: '0.75rem',
+              marginBottom: '2rem',
+              fontSize: '1.1rem',
+              color: '#cbd5f5'
+            }}>
+              Hecho por Daniel Alonso Gómez
+            </p>
+
+            <button
+              onClick={dismissSplash}
+              style={{
+                padding: '0.9rem 2.5rem',
+                fontSize: '1rem',
+                fontWeight: 600,
+                color: 'white',
+                background: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
+                border: 'none',
+                borderRadius: '999px',
+                cursor: 'pointer',
+                boxShadow: '0 10px 25px rgba(37, 99, 235, 0.45)',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)'
+                e.currentTarget.style.boxShadow = '0 16px 35px rgba(37, 99, 235, 0.55)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = '0 10px 25px rgba(37, 99, 235, 0.45)'
+              }}
+            >
+              Entrar
+            </button>
+
+            <span style={{
+              position: 'absolute',
+              bottom: '1rem',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase',
+              color: 'rgba(148, 163, 184, 0.7)'
+            }}>
+              Toque para continuar
+            </span>
+          </div>
+        </div>
+      )}
       <div style={{
         maxWidth: '1400px',
         margin: '0 auto',
